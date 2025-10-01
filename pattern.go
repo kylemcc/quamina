@@ -23,6 +23,7 @@ const (
 	monocaseType
 	wildcardType
 	regexpType
+	cidrType
 )
 
 // typedVal represents the value of a field in a pattern, giving the value and the type of pattern.
@@ -212,6 +213,8 @@ func readSpecialPattern(pb *patternBuild, valsIn []typedVal) (pathVals []typedVa
 	case "regexp":
 		containsExclusive = tt
 		pathVals, err = readRegexpSpecial(pb, pathVals)
+	case "cidr":
+		pathVals, err = readCIDRSpecial(pb, pathVals)
 	default:
 		err = errors.New("unrecognized in special pattern: " + tt)
 	}
@@ -233,6 +236,37 @@ func readPrefixSpecial(pb *patternBuild, valsIn []typedVal) (pathVals []typedVal
 	val := typedVal{
 		vType: prefixType,
 		val:   `"` + prefixString + `"`,
+	}
+	pathVals = append(pathVals, val)
+
+	// has to be } or tokenizer will throw error
+	_, err = pb.jd.Token()
+	return
+}
+
+func readCIDRSpecial(pb *patternBuild, valsIn []typedVal) (pathVals []typedVal, err error) {
+	t, err := pb.jd.Token()
+	if err != nil {
+		return
+	}
+	pathVals = valsIn
+
+	cidrString, ok := t.(string)
+	if !ok {
+		err = errors.New("value for 'cidr' must be a string")
+		return
+	}
+
+	// Validate CIDR format early
+	_, err = parseCIDR(cidrString)
+	if err != nil {
+		err = fmt.Errorf("invalid CIDR %q: %w", cidrString, err)
+		return
+	}
+
+	val := typedVal{
+		vType: cidrType,
+		val:   cidrString,
 	}
 	pathVals = append(pathVals, val)
 

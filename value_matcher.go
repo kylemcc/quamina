@@ -27,6 +27,7 @@ type vmFields struct {
 	singletonMatch      []byte
 	singletonTransition *fieldMatcher
 	hasNumbers          bool
+	hasCIDR             bool
 	isNondeterministic  bool
 }
 
@@ -67,6 +68,19 @@ func (m *valueMatcher) transitionOn(eventField *Field, bufs *nfaBuffers) []*fiel
 		return transitions
 
 	case vmFields.startTable != nil:
+		// if there is a potential for an IP match, try converting to hex
+		if vmFields.hasCIDR {
+			ipHex := ipToHexIfPossible(string(val))
+			if ipHex != nil {
+				// Matched as IP, traverse with hex representation
+				if vmFields.isNondeterministic {
+					return traverseNFA(vmFields.startTable, ipHex, transitions, bufs, sharedNullPrinter)
+				} else {
+					return traverseDFA(vmFields.startTable, ipHex, transitions)
+				}
+			}
+		}
+
 		// if there is a potential for a numeric match, try making a Q number from the event
 		if vmFields.hasNumbers && eventField.IsNumber {
 			qNum, err := qNumFromBytes(val)
@@ -79,7 +93,7 @@ func (m *valueMatcher) transitionOn(eventField *Field, bufs *nfaBuffers) []*fiel
 			}
 		}
 
-		// if it doesn't work as a Q number for some reason, go ahead and compare the string values
+		// if it doesn't work as an IP or Q number for some reason, go ahead and compare the string values
 		if vmFields.isNondeterministic {
 			return traverseNFA(vmFields.startTable, val, transitions, bufs, sharedNullPrinter)
 		} else {
@@ -137,6 +151,16 @@ func (m *valueMatcher) addTransition(val typedVal, printer printer) *fieldMatche
 		fields.isNondeterministic = true
 		newFA, nextField = makeRegexpNFA(val.parsedRegexp, true, sharedNullPrinter)
 		printer.labelTable(newFA, "RX start")
+	case cidrType:
+		fields.isNondeterministic = true
+		fields.hasCIDR = true
+		var err error
+		newFA, nextField, err = makeCIDRFA(val.val, printer)
+		if err != nil {
+			// This should not happen since we validate during pattern parsing,
+			// but handle it gracefully just in case
+			panic(fmt.Sprintf("Invalid CIDR (should have been caught during parsing): %v", err))
+		}
 	default:
 		panic("unknown value type")
 	}
